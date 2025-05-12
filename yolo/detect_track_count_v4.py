@@ -7,6 +7,7 @@ import torch
 import platform
 import os
 import requests
+import time
 
 def detect_gpu():
     """Detect and select the best available GPU"""
@@ -132,6 +133,16 @@ vehicle_last_cx = {}
 
 # เพิ่ม dictionary สำหรับเก็บ state ของแต่ละ id ว่าอยู่ฝั่งไหนของเส้น
 vehicle_states = {}
+
+# เพิ่ม dictionary สำหรับเก็บจำนวนที่ส่งล่าสุด
+last_sent_counts = {
+    'car': {'out': 0, 'in': 0},
+    'motorcycle': {'out': 0, 'in': 0},
+    'bus': {'out': 0, 'in': 0}
+}
+
+# สำหรับเก็บเวลาสุดท้ายที่ส่งข้อมูล
+last_send_time = time.time()
 
 # MODIFIED: Updated cropping function to get the bottom-right corner with custom dimensions
 def get_custom_crop(frame):
@@ -338,6 +349,18 @@ while True:
                 cv2.circle(processed_frame, (cx, cy), 4, (255, 0, 0), -1)
         # --- End: Robust counting logic with state ---
 
+    # --- ส่งข้อมูลทุกๆ 10 วินาที (เฉพาะจำนวนที่เพิ่มขึ้นในรอบนั้น) ---
+    current_time = time.time()
+    if current_time - last_send_time >= 10:
+        for vehicle_type in target_classes:
+            for direction in ['out', 'in']:
+                current_count = len(set(vehicle_counts[vehicle_type][direction]))
+                last_count = last_sent_counts[vehicle_type][direction]
+                delta = current_count - last_count
+                send_count_to_backend(vehicle_type, direction, delta)
+                last_sent_counts[vehicle_type][direction] = current_count
+        last_send_time = current_time
+
     # วาดเส้นที่มีความยาวน้อยลง
     cv2.line(processed_frame, (red_line_x, line_start_y_red), (red_line_x, line_end_y_red), (0, 0, 255), 2)
     cv2.line(processed_frame, (blue_line_x, line_start_y_blue), (blue_line_x, line_end_y_blue), (255, 0, 0), 2)
@@ -369,9 +392,13 @@ for vehicle_type in target_classes:
     print(f"{vehicle_type.capitalize()}:")
     print(f"  Out: {out_count}")
     print(f"  In: {in_count}")
-    # Send to backend
-    send_count_to_backend(vehicle_type, "out", out_count)
-    send_count_to_backend(vehicle_type, "in", in_count)
+    # ส่งรอบสุดท้าย (เฉพาะจำนวนที่เพิ่มขึ้นหลังรอบ 10 วิ สุดท้าย)
+    for direction in ['out', 'in']:
+        current_count = len(set(vehicle_counts[vehicle_type][direction]))
+        last_count = last_sent_counts[vehicle_type][direction]
+        delta = current_count - last_count
+        if delta > 0:
+            send_count_to_backend(vehicle_type, direction, delta)
 
 cap.release()
 cv2.destroyAllWindows()
